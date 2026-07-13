@@ -17,7 +17,7 @@
         <div class="badge">iPhone MVP</div>
         <h1>Signal Chime Lab</h1>
         <p class="lede">
-          Camera preview, distinct alert tones, a 5-second stationary gate, and a
+          Camera preview, a 10-second stationary gate, and a
           lead-car fallback. This is a test harness for the driving assistant concept.
         </p>
         <p class="note">
@@ -84,6 +84,18 @@
               <span id="leadDistanceValue">1.6x</span>
             </label>
           </div>
+          <div class="settings">
+            <div class="settings-head">Sound settings</div>
+            <label class="toggle">
+              <input id="yellowSoundToggle" type="checkbox" />
+              <span>Yellow sound</span>
+            </label>
+            <label class="toggle">
+              <input id="redSoundToggle" type="checkbox" />
+              <span>Red sound</span>
+            </label>
+            <p class="settings-note">Green stays on by default. Lead-car pull-away also uses the green tone.</p>
+          </div>
         </section>
 
         <section class="panel">
@@ -107,6 +119,10 @@
             <div>
               <dt>Mode</dt>
               <dd id="modeState">waiting</dd>
+            </div>
+            <div>
+              <dt>Fallback gate</dt>
+              <dd id="fallbackGateReadout">10s</dd>
             </div>
             <div>
               <dt>Vision hint</dt>

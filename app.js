@@ -15,10 +15,13 @@ const modeStateEl = document.getElementById("modeState");
 const visionHintEl = document.getElementById("visionHint");
 const appBadgeStateEl = document.getElementById("appBadgeState");
 const appBadgeLabelEl = document.querySelector(".app-badge__label");
+const fallbackGateReadoutEl = document.getElementById("fallbackGateReadout");
 const cooldownInput = document.getElementById("cooldown");
 const cooldownValueEl = document.getElementById("cooldownValue");
 const leadDistanceInput = document.getElementById("leadDistance");
 const leadDistanceValueEl = document.getElementById("leadDistanceValue");
+const yellowSoundToggle = document.getElementById("yellowSoundToggle");
+const redSoundToggle = document.getElementById("redSoundToggle");
 const armBtn = document.getElementById("armBtn");
 const stopBtn = document.getElementById("stopBtn");
 const useGpsBtn = document.getElementById("useGpsBtn");
@@ -55,9 +58,14 @@ const state = {
   pendingLeadDeparture: false,
   detectorStatus: "idle",
   visionHint: "idle",
+  soundSettings: {
+    red: false,
+    yellow: false,
+  },
 };
 
-const APP_VERSION = "v0.3";
+const APP_VERSION = "v0.4";
+const FALLBACK_STATIONARY_SECONDS = 10;
 
 const SOUND_PRESETS = {
   green: [
@@ -67,6 +75,11 @@ const SOUND_PRESETS = {
   yellow: [
     { frequency: 554, duration: 110, gap: 70 },
     { frequency: 554, duration: 110, gap: 0 },
+  ],
+  red: [
+    { frequency: 392, duration: 130, gap: 50 },
+    { frequency: 392, duration: 130, gap: 50 },
+    { frequency: 330, duration: 150, gap: 0 },
   ],
 };
 
@@ -107,6 +120,9 @@ function updateUi() {
   cooldownValueEl.textContent = `${cooldownInput.value} ms`;
   leadDistanceValueEl.textContent = `${Number(leadDistanceInput.value).toFixed(1)}x`;
   visionHintEl.textContent = state.visionHint;
+  fallbackGateReadoutEl.textContent = `${FALLBACK_STATIONARY_SECONDS}s`;
+  yellowSoundToggle.checked = state.soundSettings.yellow;
+  redSoundToggle.checked = state.soundSettings.red;
   appBadgeStateEl.textContent = `${state.detectorStatus || "idle"}`;
   appBadgeLabelEl.textContent = `Model ${APP_VERSION}`;
 }
@@ -188,6 +204,11 @@ async function playYellowSound() {
   await playPattern(SOUND_PRESETS.yellow);
 }
 
+async function playRedSound() {
+  await ensureAudio();
+  await playPattern(SOUND_PRESETS.red);
+}
+
 function shouldCooldownBlock() {
   return Date.now() - state.lastAlertAt < Number(cooldownInput.value);
 }
@@ -203,8 +224,18 @@ async function triggerAlert(kind, source) {
   updateUi();
 
   if (kind === "yellow") {
-    log(`yellow alert from ${source}`, "tone-yellow");
-    await playYellowSound();
+    log(`yellow detected from ${source}`);
+    if (state.soundSettings.yellow) {
+      await playYellowSound();
+    }
+    return;
+  }
+
+  if (kind === "red") {
+    log(`red detected from ${source}`);
+    if (state.soundSettings.red) {
+      await playRedSound();
+    }
     return;
   }
 
@@ -231,12 +262,9 @@ function setObservedLight(nextColor, confidence, source) {
     return;
   }
 
-  if ((nextColor === "green" || nextColor === "yellow") && (previous !== nextColor || state.lightLatchedColor !== nextColor)) {
+  if ((nextColor === "green" || nextColor === "yellow" || nextColor === "red") && (previous !== nextColor || state.lightLatchedColor !== nextColor)) {
     state.lightLatchedColor = nextColor;
     triggerAlert(nextColor, source);
-  } else if (nextColor === "red" && (previous !== "red" || state.lightLatchedColor !== "red")) {
-    state.lightLatchedColor = "red";
-    log(`red detected from ${source} (silent)`);
   }
 }
 
@@ -370,7 +398,10 @@ function selectBestDetection(detections, scorer) {
 
 function updateLeadTracking(leadDetection, trafficLightVisible) {
   const eligible =
-    state.isStopped && stationarySeconds() >= 5 && state.light === "none" && !trafficLightVisible;
+    state.isStopped &&
+    stationarySeconds() >= FALLBACK_STATIONARY_SECONDS &&
+    state.light === "none" &&
+    !trafficLightVisible;
   state.fallbackArmed = eligible;
 
   if (!eligible) {
@@ -662,11 +693,11 @@ function startGpsWatch() {
 function maybeTriggerFallbackFromManualLead() {
   state.fallbackArmed = true;
   state.pendingLeadDeparture = true;
-  if (state.isStopped && stationarySeconds() >= 5 && state.light === "none") {
+  if (state.isStopped && stationarySeconds() >= FALLBACK_STATIONARY_SECONDS && state.light === "none") {
     state.fallbackAlertedThisStop = true;
     triggerAlert("green", "manual lead-car cue");
   } else {
-    log("fallback cue ignored until stopped 5s with no light");
+    log(`fallback cue ignored until stopped ${FALLBACK_STATIONARY_SECONDS}s with no light`);
   }
   updateUi();
 }
@@ -712,6 +743,16 @@ leadBtn.addEventListener("click", () => {
 stopSimBtn.addEventListener("click", () => {
   setStopped(!state.isStopped, "manual toggle");
 });
+yellowSoundToggle.addEventListener("change", () => {
+  state.soundSettings.yellow = yellowSoundToggle.checked;
+  updateUi();
+  log(`yellow sound ${state.soundSettings.yellow ? "enabled" : "disabled"}`);
+});
+redSoundToggle.addEventListener("change", () => {
+  state.soundSettings.red = redSoundToggle.checked;
+  updateUi();
+  log(`red sound ${state.soundSettings.red ? "enabled" : "disabled"}`);
+});
 
 cooldownInput.addEventListener("input", updateUi);
 leadDistanceInput.addEventListener("input", updateUi);
@@ -738,9 +779,9 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-  setMode("waiting");
-  setStopped(false, "initial");
-  setObservedLight("none", 0, "init");
-  updateUi();
-  log("ready for camera and sound tests");
+setMode("waiting");
+setStopped(false, "initial");
+setObservedLight("none", 0, "init");
+updateUi();
+log("ready for camera and sound tests");
 void registerServiceWorker();
