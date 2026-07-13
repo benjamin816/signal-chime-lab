@@ -30,7 +30,7 @@ body {
 }
 
 body {
-  padding: 20px;
+  padding: 14px;
 }
 
 .app-badge {
@@ -70,6 +70,11 @@ body {
   margin: 0 auto;
   display: grid;
   gap: 18px;
+}
+
+.shell--compact {
+  max-width: 760px;
+  gap: 14px;
 }
 
 .hero {
@@ -140,6 +145,10 @@ h2 {
 
 .camera-panel {
   padding-bottom: 20px;
+}
+
+.controls-panel {
+  padding-top: 16px;
 }
 
 .video-frame {

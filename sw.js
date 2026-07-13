@@ -1,4 +1,4 @@
-const CACHE_NAME = "signal-chime-lab-v5";
+const CACHE_NAME = "signal-chime-lab-v6";
 const PRECACHE_URLS = [
   "./",
   "./index.html",

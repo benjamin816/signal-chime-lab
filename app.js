@@ -1,38 +1,13 @@
 const video = document.getElementById("video");
 const analysisCanvas = document.getElementById("analysis");
 const analysisCtx = analysisCanvas.getContext("2d", { willReadFrequently: true });
-const logEl = document.getElementById("log");
-const cameraPill = document.getElementById("cameraPill");
-const audioPill = document.getElementById("audioPill");
-const lightStateEl = document.getElementById("lightState");
-const confidenceStateEl = document.getElementById("confidenceState");
-const stoppedStateEl = document.getElementById("stoppedState");
-const fallbackStateEl = document.getElementById("fallbackState");
-const stationaryTimerEl = document.getElementById("stationaryTimer");
-const leadDistanceReadoutEl = document.getElementById("leadDistanceReadout");
-const lastAlertEl = document.getElementById("lastAlert");
-const modeStateEl = document.getElementById("modeState");
-const visionHintEl = document.getElementById("visionHint");
-const appBadgeStateEl = document.getElementById("appBadgeState");
-const appBadgeLabelEl = document.querySelector(".app-badge__label");
-const fallbackGateReadoutEl = document.getElementById("fallbackGateReadout");
-const parkedAfterReadoutEl = document.getElementById("parkedAfterReadout");
 const cooldownInput = document.getElementById("cooldown");
 const cooldownValueEl = document.getElementById("cooldownValue");
 const leadDistanceInput = document.getElementById("leadDistance");
 const leadDistanceValueEl = document.getElementById("leadDistanceValue");
 const yellowSoundToggle = document.getElementById("yellowSoundToggle");
 const redSoundToggle = document.getElementById("redSoundToggle");
-const mapPriorToggle = document.getElementById("mapPriorToggle");
-const mapPriorStateEl = document.getElementById("mapPriorState");
-const mapCacheReadoutEl = document.getElementById("mapCacheReadout");
-const gpsFixReadoutEl = document.getElementById("gpsFixReadout");
 const armBtn = document.getElementById("armBtn");
-const stopBtn = document.getElementById("stopBtn");
-const useGpsBtn = document.getElementById("useGpsBtn");
-const mapRefreshBtn = document.getElementById("mapRefreshBtn");
-const leadBtn = document.getElementById("leadBtn");
-const stopSimBtn = document.getElementById("stopSimBtn");
 
 const state = {
   running: false,
@@ -74,7 +49,7 @@ const state = {
   detectorStatus: "idle",
   visionHint: "idle",
   mapPrior: {
-    enabled: false,
+    enabled: true,
     status: "off",
     loading: false,
     nearbyCount: 0,
@@ -94,7 +69,7 @@ const state = {
   },
 };
 
-const APP_VERSION = "v0.7";
+const APP_VERSION = "v0.9";
 const FALLBACK_STATIONARY_SECONDS = 10;
 const PARKED_STATIONARY_SECONDS = 420;
 const MAP_CACHE_KEY = "signal-chime-map-cache-v1";
@@ -228,53 +203,18 @@ function saveMapCache(cache) {
   }
 }
 
-function summarizeMapStatus() {
-  const { enabled, status, confidence, nearbyCount, nearestDistanceM, signalCount, source, error } = state.mapPrior;
-
-  if (!enabled) {
-    mapPriorStateEl.textContent = "off";
-    mapCacheReadoutEl.textContent = "empty";
-    return;
-  }
-
-  const confidencePct = `${Math.round(confidence * 100)}%`;
-  const distanceText = nearestDistanceM == null ? "n/a" : formatDistanceMeters(nearestDistanceM);
-  const core = `${status} | ${confidencePct} | ${nearbyCount} near | ${distanceText}`;
-  mapPriorStateEl.textContent = error ? `${core} | ${error}` : core;
-  const ageText = source === "live" ? "live" : state.mapPrior.cacheAgeMs > 0 ? formatAge(state.mapPrior.cacheAgeMs) : "n/a";
-  mapCacheReadoutEl.textContent = signalCount > 0 ? `${signalCount} signals (${source}, ${ageText})` : `0 signals (${source}, ${ageText})`;
-}
+function summarizeMapStatus() {}
 
 function summarizeGpsFix() {
-  const { lat, lon, speed, heading, accuracy } = state.gps;
-
-  if (lat == null || lon == null) {
-    return "unknown";
-  }
-
-  const pieces = [];
-  if (Number.isFinite(accuracy)) {
-    pieces.push(`±${Math.round(accuracy)}m`);
-  }
-  if (Number.isFinite(speed)) {
-    pieces.push(`${Math.round(speed * 3.6)}km/h`);
-  }
-  if (Number.isFinite(heading)) {
-    pieces.push(`${Math.round(normalizeDegrees(heading))}°`);
-  }
-
-  return pieces.length ? pieces.join(" | ") : "locked";
+  return "unknown";
 }
 
 function log(message, tone = "tone-muted") {
-  const row = document.createElement("div");
-  row.className = `log-entry ${tone}`;
-  row.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-  logEl.prepend(row);
+  console.log(`[${tone}] ${message}`);
 }
 
 function setMode(text) {
-  modeStateEl.textContent = text;
+  state.visionHint = text;
 }
 
 function stationarySeconds() {
@@ -285,27 +225,10 @@ function stationarySeconds() {
 }
 
 function updateUi() {
-  cameraPill.textContent = state.running ? "camera live" : "idle";
-  audioPill.textContent = state.audioReady ? "audio armed" : "audio locked";
-  lightStateEl.textContent = state.light;
-  confidenceStateEl.textContent = `${Math.round(state.lightConfidence * 100)}%`;
-  stoppedStateEl.textContent = state.isParked ? "parked" : state.isStopped ? "yes" : "no";
-  fallbackStateEl.textContent = state.isParked ? "parked" : `armed: ${state.fallbackArmed ? "yes" : "no"}`;
-  stationaryTimerEl.textContent = state.isParked ? "parked" : `${stationarySeconds().toFixed(1)}s`;
-  leadDistanceReadoutEl.textContent = `${state.leadDistance.toFixed(1)}x`;
-  lastAlertEl.textContent = state.lastAlertType;
   cooldownValueEl.textContent = `${cooldownInput.value} ms`;
   leadDistanceValueEl.textContent = `${Number(leadDistanceInput.value).toFixed(1)}x`;
-  visionHintEl.textContent = state.visionHint;
-  fallbackGateReadoutEl.textContent = `${FALLBACK_STATIONARY_SECONDS}s`;
-  parkedAfterReadoutEl.textContent = "7m";
   yellowSoundToggle.checked = state.soundSettings.yellow;
   redSoundToggle.checked = state.soundSettings.red;
-  mapPriorToggle.checked = state.mapPrior.enabled;
-  gpsFixReadoutEl.textContent = summarizeGpsFix();
-  appBadgeStateEl.textContent = state.isParked ? "parked" : `${state.detectorStatus || "idle"}`;
-  appBadgeLabelEl.textContent = `Model ${APP_VERSION}`;
-  summarizeMapStatus();
 }
 
 function refreshParkedState(reason = "timer") {
@@ -819,6 +742,9 @@ async function startCamera() {
     setMode("camera active");
     log("camera started");
     startLoops();
+    if (state.mapPrior.enabled) {
+      startGpsWatch();
+    }
     updateUi();
     await loadDetector();
   } catch (error) {
@@ -840,7 +766,6 @@ function stopCamera() {
     state.geoWatchId = null;
   }
   state.useGps = false;
-  useGpsBtn.textContent = "Use GPS speed";
   state.gps = {
     lat: null,
     lon: null,
@@ -903,13 +828,11 @@ function startGpsWatch() {
     navigator.geolocation.clearWatch(state.geoWatchId);
     state.geoWatchId = null;
     state.useGps = false;
-    useGpsBtn.textContent = "Use GPS speed";
     log("gps watch stopped");
     return;
   }
 
   state.useGps = true;
-  useGpsBtn.textContent = "Stop GPS speed";
   log("gps watch started");
 
   state.geoWatchId = navigator.geolocation.watchPosition(
@@ -943,7 +866,6 @@ function startGpsWatch() {
         state.geoWatchId = null;
       }
       state.useGps = false;
-      useGpsBtn.textContent = "Use GPS speed";
       state.gps = {
         lat: null,
         lon: null,
@@ -1373,38 +1295,6 @@ armBtn.addEventListener("click", async () => {
   log("audio armed");
 });
 
-stopBtn.addEventListener("click", stopCamera);
-useGpsBtn.addEventListener("click", startGpsWatch);
-mapRefreshBtn.addEventListener("click", () => {
-  if (!state.mapPrior.enabled) {
-    setMapPriorEnabled(true, "manual refresh");
-    return;
-  }
-  if (state.gps.lat != null && state.gps.lon != null) {
-    void refreshMapPrior(
-      {
-        coords: {
-          latitude: state.gps.lat,
-          longitude: state.gps.lon,
-          accuracy: state.gps.accuracy,
-          heading: state.gps.heading,
-          speed: state.gps.speed,
-        },
-      },
-      { reason: "manual", force: true }
-    );
-  } else {
-    log("map refresh waiting for GPS fix");
-    state.mapPrior.status = "waiting for gps";
-    updateUi();
-  }
-});
-leadBtn.addEventListener("click", () => {
-  maybeTriggerFallbackFromManualLead();
-});
-stopSimBtn.addEventListener("click", () => {
-  setStopped(!state.isStopped, "manual toggle");
-});
 yellowSoundToggle.addEventListener("change", () => {
   state.soundSettings.yellow = yellowSoundToggle.checked;
   updateUi();
@@ -1415,59 +1305,9 @@ redSoundToggle.addEventListener("change", () => {
   updateUi();
   log(`red sound ${state.soundSettings.red ? "enabled" : "disabled"}`);
 });
-mapPriorToggle.addEventListener("change", () => {
-  setMapPriorEnabled(mapPriorToggle.checked, "toggle");
-});
 
 cooldownInput.addEventListener("input", updateUi);
 leadDistanceInput.addEventListener("input", updateUi);
-
-document.querySelectorAll("[data-light]").forEach((button) => {
-  button.addEventListener("click", () => {
-    const nextColor = button.dataset.light;
-    const confidence = nextColor === "none" ? 0 : 0.96;
-    setObservedLight(nextColor, confidence, "manual test");
-    if (nextColor === "green") {
-      state.fallbackAlertedThisStop = true;
-    } else if (nextColor === "none") {
-      state.fallbackArmed = false;
-      state.leadBaselineArea = null;
-      state.leadBaselineBottom = null;
-      state.pendingLeadDeparture = false;
-    }
-  });
-});
-
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    log("page hidden");
-  }
-});
-
-window.addEventListener("online", () => {
-  if (state.mapPrior.enabled && state.gps.lat != null && state.gps.lon != null) {
-    void refreshMapPrior(
-      {
-        coords: {
-          latitude: state.gps.lat,
-          longitude: state.gps.lon,
-          accuracy: state.gps.accuracy,
-          heading: state.gps.heading,
-          speed: state.gps.speed,
-        },
-      },
-      { reason: "online", force: true }
-    );
-  }
-});
-
-window.addEventListener("offline", () => {
-  if (state.mapPrior.enabled) {
-    state.mapPrior.status = "offline";
-    state.mapPrior.source = "offline";
-    updateUi();
-  }
-});
 
 setMode("waiting");
 setStopped(false, "initial");
@@ -1475,5 +1315,5 @@ setObservedLight("none", 0, "init");
 updateUi();
 log("ready for camera and sound tests");
 refreshParkedState("initial");
-summarizeMapStatus();
 void registerServiceWorker();
+
