@@ -12,6 +12,7 @@ const stationaryTimerEl = document.getElementById("stationaryTimer");
 const leadDistanceReadoutEl = document.getElementById("leadDistanceReadout");
 const lastAlertEl = document.getElementById("lastAlert");
 const modeStateEl = document.getElementById("modeState");
+const visionHintEl = document.getElementById("visionHint");
 const cooldownInput = document.getElementById("cooldown");
 const cooldownValueEl = document.getElementById("cooldownValue");
 const leadDistanceInput = document.getElementById("leadDistance");
@@ -51,6 +52,7 @@ const state = {
   leadLastBottom: null,
   pendingLeadDeparture: false,
   detectorStatus: "idle",
+  visionHint: "idle",
 };
 
 const SOUND_PRESETS = {
@@ -100,6 +102,7 @@ function updateUi() {
   lastAlertEl.textContent = state.lastAlertType;
   cooldownValueEl.textContent = `${cooldownInput.value} ms`;
   leadDistanceValueEl.textContent = `${Number(leadDistanceInput.value).toFixed(1)}x`;
+  visionHintEl.textContent = state.visionHint;
 }
 
 function setStopped(nextStopped, reason = "manual") {
@@ -408,7 +411,9 @@ function updateVisionStatus(detections, selectedLight, leadDetection, colorResul
     summary.push(`color: ${colorResult.color}`);
   }
 
+  state.visionHint = summary.join(" | ");
   setMode(summary.join(" | "));
+  updateUi();
 }
 
 async function processVisionFrame() {
