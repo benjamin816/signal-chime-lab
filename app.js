@@ -13,6 +13,8 @@ const leadDistanceReadoutEl = document.getElementById("leadDistanceReadout");
 const lastAlertEl = document.getElementById("lastAlert");
 const modeStateEl = document.getElementById("modeState");
 const visionHintEl = document.getElementById("visionHint");
+const appBadgeStateEl = document.getElementById("appBadgeState");
+const appBadgeLabelEl = document.querySelector(".app-badge__label");
 const cooldownInput = document.getElementById("cooldown");
 const cooldownValueEl = document.getElementById("cooldownValue");
 const leadDistanceInput = document.getElementById("leadDistance");
@@ -54,6 +56,8 @@ const state = {
   detectorStatus: "idle",
   visionHint: "idle",
 };
+
+const APP_VERSION = "v0.3";
 
 const SOUND_PRESETS = {
   green: [
@@ -103,6 +107,8 @@ function updateUi() {
   cooldownValueEl.textContent = `${cooldownInput.value} ms`;
   leadDistanceValueEl.textContent = `${Number(leadDistanceInput.value).toFixed(1)}x`;
   visionHintEl.textContent = state.visionHint;
+  appBadgeStateEl.textContent = `${state.detectorStatus || "idle"}`;
+  appBadgeLabelEl.textContent = `Model ${APP_VERSION}`;
 }
 
 function setStopped(nextStopped, reason = "manual") {
@@ -724,9 +730,9 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-setMode("waiting");
-setStopped(false, "initial");
-setObservedLight("none", 0, "init");
-updateUi();
-log("ready for camera and sound tests");
+  setMode("waiting");
+  setStopped(false, "initial");
+  setObservedLight("none", 0, "init");
+  updateUi();
+  log("ready for camera and sound tests");
 void registerServiceWorker();
