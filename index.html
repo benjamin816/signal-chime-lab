@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1020" />
+    <title>Signal Chime Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="badge">iPhone MVP</div>
+        <h1>Signal Chime Lab</h1>
+        <p class="lede">
+          Camera preview, distinct alert tones, a 5-second stationary gate, and a
+          lead-car fallback. This is a test harness for the driving assistant concept.
+        </p>
+        <p class="note">
+          Works best on <strong>localhost</strong> or HTTPS. Tap <strong>Arm camera + audio</strong>
+          to unlock permissions and sound.
+        </p>
+      </section>
+
+      <section class="panel camera-panel">
+        <div class="panel-head">
+          <h2>Camera</h2>
+          <div class="pill" id="cameraPill">idle</div>
+        </div>
+        <div class="video-frame">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="analysis" width="320" height="240" aria-hidden="true"></canvas>
+          <div class="overlay">
+            <div class="overlay-row">
+              <span class="label">Light</span>
+              <strong id="lightState">none</strong>
+            </div>
+            <div class="overlay-row">
+              <span class="label">Confidence</span>
+              <strong id="confidenceState">0%</strong>
+            </div>
+            <div class="overlay-row">
+              <span class="label">Stopped</span>
+              <strong id="stoppedState">no</strong>
+            </div>
+            <div class="overlay-row">
+              <span class="label">Fallback</span>
+              <strong id="fallbackState">armed: no</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Controls</h2>
+          </div>
+          <div class="controls">
+            <button id="armBtn" class="primary">Arm camera + audio</button>
+            <button id="stopBtn">Stop</button>
+            <button id="useGpsBtn">Use GPS speed</button>
+          </div>
+          <div class="controls muted">
+            <button data-light="green">Sim Green</button>
+            <button data-light="yellow">Sim Yellow</button>
+            <button data-light="none">Clear Light</button>
+            <button id="leadBtn">Lead car pulled away</button>
+            <button id="stopSimBtn">Toggle stopped</button>
+          </div>
+          <div class="sliders">
+            <label>
+              Cooldown
+              <input id="cooldown" type="range" min="3000" max="15000" step="500" value="8000" />
+              <span id="cooldownValue">8000 ms</span>
+            </label>
+            <label>
+              Lead pull-away threshold
+              <input id="leadDistance" type="range" min="0.5" max="4" step="0.1" value="1.6" />
+              <span id="leadDistanceValue">1.6x</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Status</h2>
+            <div class="pill" id="audioPill">audio locked</div>
+          </div>
+          <dl class="status-grid">
+            <div>
+              <dt>Stationary timer</dt>
+              <dd id="stationaryTimer">0.0s</dd>
+            </div>
+            <div>
+              <dt>Lead proxy</dt>
+              <dd id="leadDistanceReadout">0.0x</dd>
+            </div>
+            <div>
+              <dt>Last alert</dt>
+              <dd id="lastAlert">none</dd>
+            </div>
+            <div>
+              <dt>Mode</dt>
+              <dd id="modeState">waiting</dd>
+            </div>
+          </dl>
+          <div class="log" id="log" aria-live="polite"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./vendor/tf.es2017.min.js"></script>
+    <script src="./vendor/coco-ssd.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
