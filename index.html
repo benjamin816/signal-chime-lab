@@ -9,7 +9,7 @@
   </head>
   <body>
     <div class="app-badge" id="appBadge">
-      <span class="app-badge__label">Model v0.3</span>
+      <span class="app-badge__label">Model v0.6</span>
       <span class="app-badge__state" id="appBadgeState">idle</span>
     </div>
     <main class="shell">
@@ -64,6 +64,7 @@
             <button id="armBtn" class="primary">Arm camera + audio</button>
             <button id="stopBtn">Stop</button>
             <button id="useGpsBtn">Use GPS speed</button>
+            <button id="mapRefreshBtn">Refresh map</button>
           </div>
           <div class="controls muted">
             <button data-light="green">Sim Green</button>
@@ -95,6 +96,17 @@
               <span>Red sound</span>
             </label>
             <p class="settings-note">Green stays on by default. Lead-car pull-away also uses the green tone.</p>
+          </div>
+          <div class="settings">
+            <div class="settings-head">Map prior</div>
+            <label class="toggle">
+              <input id="mapPriorToggle" type="checkbox" />
+              <span>Use OpenStreetMap traffic lights</span>
+            </label>
+            <p class="settings-note">
+              When enabled, GPS is used to look up nearby OSM traffic-signal nodes and bias the vision model.
+              The map never beeps by itself.
+            </p>
           </div>
         </section>
 
@@ -131,6 +143,18 @@
             <div>
               <dt>Vision hint</dt>
               <dd id="visionHint">idle</dd>
+            </div>
+            <div>
+              <dt>Map prior</dt>
+              <dd id="mapPriorState">off</dd>
+            </div>
+            <div>
+              <dt>Map cache</dt>
+              <dd id="mapCacheReadout">empty</dd>
+            </div>
+            <div>
+              <dt>GPS fix</dt>
+              <dd id="gpsFixReadout">unknown</dd>
             </div>
           </dl>
           <div class="log" id="log" aria-live="polite"></div>

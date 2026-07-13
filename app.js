@@ -23,9 +23,14 @@ const leadDistanceInput = document.getElementById("leadDistance");
 const leadDistanceValueEl = document.getElementById("leadDistanceValue");
 const yellowSoundToggle = document.getElementById("yellowSoundToggle");
 const redSoundToggle = document.getElementById("redSoundToggle");
+const mapPriorToggle = document.getElementById("mapPriorToggle");
+const mapPriorStateEl = document.getElementById("mapPriorState");
+const mapCacheReadoutEl = document.getElementById("mapCacheReadout");
+const gpsFixReadoutEl = document.getElementById("gpsFixReadout");
 const armBtn = document.getElementById("armBtn");
 const stopBtn = document.getElementById("stopBtn");
 const useGpsBtn = document.getElementById("useGpsBtn");
+const mapRefreshBtn = document.getElementById("mapRefreshBtn");
 const leadBtn = document.getElementById("leadBtn");
 const stopSimBtn = document.getElementById("stopSimBtn");
 
@@ -41,6 +46,14 @@ const state = {
   visionTickId: null,
   frameBusy: false,
   useGps: false,
+  gps: {
+    lat: null,
+    lon: null,
+    heading: null,
+    speed: null,
+    accuracy: null,
+    timestamp: 0,
+  },
   isStopped: false,
   isParked: false,
   stationarySince: null,
@@ -60,15 +73,39 @@ const state = {
   pendingLeadDeparture: false,
   detectorStatus: "idle",
   visionHint: "idle",
+  mapPrior: {
+    enabled: false,
+    status: "off",
+    loading: false,
+    nearbyCount: 0,
+    nearestDistanceM: null,
+    confidence: 0,
+    signalCount: 0,
+    lastFetchAt: 0,
+    lastQueryLat: null,
+    lastQueryLon: null,
+    cacheAgeMs: 0,
+    source: "none",
+    error: "",
+  },
   soundSettings: {
     red: false,
     yellow: false,
   },
 };
 
-const APP_VERSION = "v0.5";
+const APP_VERSION = "v0.6";
 const FALLBACK_STATIONARY_SECONDS = 10;
 const PARKED_STATIONARY_SECONDS = 420;
+const MAP_CACHE_KEY = "signal-chime-map-cache-v1";
+const MAP_QUERY_RADIUS_M = 350;
+const MAP_REFRESH_DISTANCE_M = 120;
+const MAP_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const MAP_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAP_OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+];
 
 const SOUND_PRESETS = {
   green: [
@@ -90,6 +127,140 @@ let audioContext = null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function toRadians(degrees) {
+  return (degrees * Math.PI) / 180;
+}
+
+function normalizeDegrees(degrees) {
+  return ((degrees % 360) + 360) % 360;
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const earthRadius = 6371000;
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * earthRadius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function bearingDegrees(lat1, lon1, lat2, lon2) {
+  const y = Math.sin(toRadians(lon2 - lon1)) * Math.cos(toRadians(lat2));
+  const x =
+    Math.cos(toRadians(lat1)) * Math.sin(toRadians(lat2)) -
+    Math.sin(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.cos(toRadians(lon2 - lon1));
+  return normalizeDegrees((Math.atan2(y, x) * 180) / Math.PI);
+}
+
+function angleDifference(a, b) {
+  const diff = Math.abs(normalizeDegrees(a) - normalizeDegrees(b));
+  return Math.min(diff, 360 - diff);
+}
+
+function formatDistanceMeters(meters) {
+  if (!Number.isFinite(meters)) {
+    return "n/a";
+  }
+
+  if (meters < 1000) {
+    return `${Math.round(meters)}m`;
+  }
+
+  return `${(meters / 1000).toFixed(1)}km`;
+}
+
+function formatAge(ms) {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return "n/a";
+  }
+
+  if (ms < 60000) {
+    return `${Math.max(1, Math.round(ms / 1000))}s`;
+  }
+
+  if (ms < 3600000) {
+    return `${Math.round(ms / 60000)}m`;
+  }
+
+  if (ms < 86400000) {
+    return `${Math.round(ms / 3600000)}h`;
+  }
+
+  return `${Math.round(ms / 86400000)}d`;
+}
+
+function safeJsonParse(raw, fallback = null) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function loadMapCache() {
+  try {
+    if (!window.localStorage) {
+      return null;
+    }
+
+    return safeJsonParse(window.localStorage.getItem(MAP_CACHE_KEY), null);
+  } catch {
+    return null;
+  }
+}
+
+function saveMapCache(cache) {
+  try {
+    if (!window.localStorage) {
+      return;
+    }
+
+    window.localStorage.setItem(MAP_CACHE_KEY, JSON.stringify(cache));
+  } catch (error) {
+    log(`map cache save failed: ${error.message}`);
+  }
+}
+
+function summarizeMapStatus() {
+  const { enabled, status, confidence, nearbyCount, nearestDistanceM, signalCount, source, error } = state.mapPrior;
+
+  if (!enabled) {
+    mapPriorStateEl.textContent = "off";
+    mapCacheReadoutEl.textContent = "empty";
+    return;
+  }
+
+  const confidencePct = `${Math.round(confidence * 100)}%`;
+  const distanceText = nearestDistanceM == null ? "n/a" : formatDistanceMeters(nearestDistanceM);
+  const core = `${status} | ${confidencePct} | ${nearbyCount} near | ${distanceText}`;
+  mapPriorStateEl.textContent = error ? `${core} | ${error}` : core;
+  const ageText = source === "live" ? "live" : state.mapPrior.cacheAgeMs > 0 ? formatAge(state.mapPrior.cacheAgeMs) : "n/a";
+  mapCacheReadoutEl.textContent = signalCount > 0 ? `${signalCount} signals (${source}, ${ageText})` : `0 signals (${source}, ${ageText})`;
+}
+
+function summarizeGpsFix() {
+  const { lat, lon, speed, heading, accuracy } = state.gps;
+
+  if (lat == null || lon == null) {
+    return "unknown";
+  }
+
+  const pieces = [];
+  if (Number.isFinite(accuracy)) {
+    pieces.push(`±${Math.round(accuracy)}m`);
+  }
+  if (Number.isFinite(speed)) {
+    pieces.push(`${Math.round(speed * 3.6)}km/h`);
+  }
+  if (Number.isFinite(heading)) {
+    pieces.push(`${Math.round(normalizeDegrees(heading))}°`);
+  }
+
+  return pieces.length ? pieces.join(" | ") : "locked";
 }
 
 function log(message, tone = "tone-muted") {
@@ -127,8 +298,11 @@ function updateUi() {
   parkedAfterReadoutEl.textContent = "7m";
   yellowSoundToggle.checked = state.soundSettings.yellow;
   redSoundToggle.checked = state.soundSettings.red;
+  mapPriorToggle.checked = state.mapPrior.enabled;
+  gpsFixReadoutEl.textContent = summarizeGpsFix();
   appBadgeStateEl.textContent = state.isParked ? "parked" : `${state.detectorStatus || "idle"}`;
   appBadgeLabelEl.textContent = `Model ${APP_VERSION}`;
+  summarizeMapStatus();
 }
 
 function refreshParkedState(reason = "timer") {
@@ -405,7 +579,8 @@ function scoreTrafficLightCandidate(det) {
   const centerScore = clamp(1 - centerDistance / 0.75, 0, 1);
   const upperScore = clamp(1 - cy / 0.95, 0, 1);
   const sizeScore = clamp(Math.sqrt((w * h) / (analysisCanvas.width * analysisCanvas.height)) * 4, 0, 1);
-  return det.score * 0.45 + centerScore * 0.25 + upperScore * 0.2 + sizeScore * 0.1;
+  const mapBoost = state.mapPrior.enabled ? clamp(state.mapPrior.confidence * 0.12, 0, 0.12) : 0;
+  return det.score * 0.45 + centerScore * 0.25 + upperScore * 0.2 + sizeScore * 0.1 + mapBoost;
 }
 
 function scoreLeadCarCandidate(det) {
@@ -426,12 +601,15 @@ function selectBestDetection(detections, scorer) {
 }
 
 function updateLeadTracking(leadDetection, trafficLightVisible) {
+  const mapAllowsFallback =
+    !state.mapPrior.enabled || state.mapPrior.signalCount === 0 || state.mapPrior.confidence >= 0.38;
   const eligible =
     state.isStopped &&
     !state.isParked &&
     stationarySeconds() >= FALLBACK_STATIONARY_SECONDS &&
     state.light === "none" &&
-    !trafficLightVisible;
+    !trafficLightVisible &&
+    mapAllowsFallback;
   state.fallbackArmed = eligible;
 
   if (!eligible) {
@@ -484,6 +662,10 @@ function updateVisionStatus(detections, selectedLight, leadDetection, colorResul
 
   if (colorResult?.color && colorResult.color !== "none") {
     summary.push(`color: ${colorResult.color}`);
+  }
+
+  if (state.mapPrior.enabled) {
+    summary.push(`map: ${Math.round(state.mapPrior.confidence * 100)}%`);
   }
 
   state.visionHint = summary.join(" | ");
@@ -654,6 +836,26 @@ function stopCamera() {
     navigator.geolocation.clearWatch(state.geoWatchId);
     state.geoWatchId = null;
   }
+  state.useGps = false;
+  useGpsBtn.textContent = "Use GPS speed";
+  state.gps = {
+    lat: null,
+    lon: null,
+    heading: null,
+    speed: null,
+    accuracy: null,
+    timestamp: 0,
+  };
+  if (state.mapPrior.enabled) {
+    state.mapPrior.status = "waiting for gps";
+    state.mapPrior.source = "none";
+    state.mapPrior.loading = false;
+    state.mapPrior.confidence = 0;
+    state.mapPrior.nearbyCount = 0;
+    state.mapPrior.nearestDistanceM = null;
+    state.mapPrior.signalCount = 0;
+    state.mapPrior.error = "";
+  }
 
   if (state.stateTickId != null) {
     clearInterval(state.stateTickId);
@@ -680,6 +882,17 @@ function stopCamera() {
 function startGpsWatch() {
   if (!navigator.geolocation) {
     log("geolocation unavailable");
+    if (state.mapPrior.enabled) {
+      state.mapPrior.status = "no gps";
+      state.mapPrior.source = "none";
+      state.mapPrior.loading = false;
+      state.mapPrior.signalCount = 0;
+      state.mapPrior.nearbyCount = 0;
+      state.mapPrior.nearestDistanceM = null;
+      state.mapPrior.confidence = 0;
+      state.mapPrior.error = "";
+      updateUi();
+    }
     return;
   }
 
@@ -698,15 +911,27 @@ function startGpsWatch() {
 
   state.geoWatchId = navigator.geolocation.watchPosition(
     (position) => {
-      const speed = position.coords.speed;
+      const { latitude, longitude, speed, heading, accuracy } = position.coords;
+      state.gps.lat = latitude;
+      state.gps.lon = longitude;
+      state.gps.speed = Number.isFinite(speed) ? speed : null;
+      state.gps.heading = Number.isFinite(heading) ? heading : null;
+      state.gps.accuracy = Number.isFinite(accuracy) ? accuracy : null;
+      state.gps.timestamp = position.timestamp || Date.now();
+
       if (typeof speed === "number") {
         const stopped = speed <= 0.5;
         setStopped(stopped, "gps");
         if (!stopped) {
           state.leadDistance = 0;
         }
-        updateUi();
       }
+
+      if (state.mapPrior.enabled) {
+        void refreshMapPrior(position, { reason: "gps" });
+      }
+
+      updateUi();
     },
     (error) => {
       log(`gps error: ${error.message}`);
@@ -716,9 +941,382 @@ function startGpsWatch() {
       }
       state.useGps = false;
       useGpsBtn.textContent = "Use GPS speed";
+      state.gps = {
+        lat: null,
+        lon: null,
+        heading: null,
+        speed: null,
+        accuracy: null,
+        timestamp: 0,
+      };
+      if (state.mapPrior.enabled) {
+        state.mapPrior.status = "waiting for gps";
+        state.mapPrior.source = "none";
+        state.mapPrior.loading = false;
+        state.mapPrior.signalCount = 0;
+        state.mapPrior.nearbyCount = 0;
+        state.mapPrior.nearestDistanceM = null;
+        state.mapPrior.confidence = 0;
+        state.mapPrior.error = "";
+      }
+      updateUi();
     },
     { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
   );
+}
+
+function buildOverpassQuery(lat, lon, radiusM) {
+  return [
+    "[out:json][timeout:10];",
+    "(",
+    `node["highway"="traffic_signals"](around:${Math.round(radiusM)},${lat},${lon});`,
+    `node["crossing"="traffic_signals"](around:${Math.round(radiusM)},${lat},${lon});`,
+    ");",
+    "out body;",
+  ].join("");
+}
+
+function extractSignalsFromOverpass(payload) {
+  if (!payload || !Array.isArray(payload.elements)) {
+    return [];
+  }
+
+  return payload.elements
+    .filter((element) => element.type === "node" && typeof element.lat === "number" && typeof element.lon === "number")
+    .map((element) => ({
+      id: element.id,
+      lat: element.lat,
+      lon: element.lon,
+      tags: element.tags || {},
+    }));
+}
+
+function loadMapEntries() {
+  const cache = loadMapCache();
+  const entries = Array.isArray(cache?.entries) ? cache.entries : [];
+  return entries.filter(
+    (entry) =>
+      entry &&
+      typeof entry.fetchedAt === "number" &&
+      typeof entry.radius === "number" &&
+      entry.center &&
+      typeof entry.center.lat === "number" &&
+      typeof entry.center.lon === "number" &&
+      Array.isArray(entry.signals)
+  );
+}
+
+function pickCachedMapEntry(lat, lon, allowStale = false) {
+  const entries = loadMapEntries()
+    .map((entry) => ({
+      ...entry,
+      cacheAgeMs: Date.now() - entry.fetchedAt,
+      distanceM: haversineMeters(lat, lon, entry.center.lat, entry.center.lon),
+    }))
+    .sort((a, b) => a.distanceM - b.distanceM);
+
+  if (!entries.length) {
+    return null;
+  }
+
+  const freshEntries = entries.filter((entry) => entry.cacheAgeMs <= MAP_CACHE_TTL_MS);
+  const candidates = freshEntries.length ? freshEntries : allowStale ? entries : [];
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  const best = candidates[0];
+  if (best.distanceM <= best.radius + MAP_REFRESH_DISTANCE_M) {
+    return best;
+  }
+
+  return best.distanceM <= 2 * best.radius ? best : null;
+}
+
+function computeMapPrior(position, signals, source, fetchedAt) {
+  const coords = position?.coords || {};
+  const lat = coords.latitude;
+  const lon = coords.longitude;
+  const accuracy = Number.isFinite(coords.accuracy) ? coords.accuracy : null;
+  const heading = Number.isFinite(coords.heading) ? coords.heading : null;
+
+  let bestSignal = null;
+  let nearbyCount = 0;
+  let signalCount = 0;
+
+  for (const signal of signals) {
+    if (typeof signal.lat !== "number" || typeof signal.lon !== "number") {
+      continue;
+    }
+
+    signalCount += 1;
+    const distanceM = haversineMeters(lat, lon, signal.lat, signal.lon);
+    const distanceScore = clamp(1 - distanceM / 260, 0, 1);
+    const bearing = bearingDegrees(lat, lon, signal.lat, signal.lon);
+    const headingScore = heading == null ? 0.45 : clamp(1 - angleDifference(heading, bearing) / 120, 0, 1);
+    const proximityBonus = distanceM < 90 ? 0.08 : distanceM < 180 ? 0.04 : 0;
+    const directionBonus = signal.tags?.["traffic_signals:direction"] ? 0.05 : 0;
+    const score = distanceScore * 0.68 + headingScore * 0.22 + proximityBonus + directionBonus;
+
+    if (distanceM <= 180) {
+      nearbyCount += 1;
+    }
+
+    if (!bestSignal || score > bestSignal.score) {
+      bestSignal = {
+        score,
+        distanceM,
+      };
+    }
+  }
+
+  const accuracyMultiplier = accuracy == null ? 0.9 : clamp(1 - accuracy / 140, 0.35, 1);
+  const rawConfidence = bestSignal ? bestSignal.score * accuracyMultiplier : 0;
+  const confidence = clamp(rawConfidence, 0, 1);
+
+  let status;
+  if (!signalCount) {
+    status = "no mapped lights";
+  } else if (confidence >= 0.72) {
+    status = "signal likely ahead";
+  } else if (confidence >= 0.42) {
+    status = "signal nearby";
+  } else {
+    status = "signal weak";
+  }
+
+  return {
+    enabled: true,
+    status,
+    confidence,
+    nearbyCount,
+    signalCount,
+    nearestDistanceM: bestSignal?.distanceM ?? null,
+    source,
+    cacheAgeMs: fetchedAt ? Date.now() - fetchedAt : 0,
+    error: "",
+  };
+}
+
+function applyMapPriorResult(result, source, fetchedAt, queryLat, queryLon) {
+  state.mapPrior.enabled = true;
+  state.mapPrior.loading = false;
+  state.mapPrior.status = result.status;
+  state.mapPrior.confidence = result.confidence;
+  state.mapPrior.nearbyCount = result.nearbyCount;
+  state.mapPrior.signalCount = result.signalCount;
+  state.mapPrior.nearestDistanceM = result.nearestDistanceM;
+  state.mapPrior.source = source;
+  state.mapPrior.cacheAgeMs = result.cacheAgeMs;
+  state.mapPrior.lastFetchAt = fetchedAt || state.mapPrior.lastFetchAt;
+  state.mapPrior.lastQueryLat = queryLat ?? state.mapPrior.lastQueryLat;
+  state.mapPrior.lastQueryLon = queryLon ?? state.mapPrior.lastQueryLon;
+  state.mapPrior.error = result.error || "";
+  updateUi();
+}
+
+function applyCachedMapPrior(position, reason = "cache") {
+  const lat = position?.coords?.latitude;
+  const lon = position?.coords?.longitude;
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    state.mapPrior.status = "waiting for gps";
+    state.mapPrior.source = reason;
+    state.mapPrior.error = "";
+    state.mapPrior.loading = false;
+    updateUi();
+    return false;
+  }
+
+  const entry = pickCachedMapEntry(lat, lon, true);
+  if (!entry) {
+    state.mapPrior.status = "no cache";
+    state.mapPrior.source = reason;
+    state.mapPrior.loading = false;
+    state.mapPrior.signalCount = 0;
+    state.mapPrior.nearbyCount = 0;
+    state.mapPrior.nearestDistanceM = null;
+    state.mapPrior.confidence = 0;
+    state.mapPrior.cacheAgeMs = 0;
+    state.mapPrior.error = "";
+    updateUi();
+    return false;
+  }
+
+  const result = computeMapPrior(position, entry.signals, reason, entry.fetchedAt);
+  applyMapPriorResult(result, reason, entry.fetchedAt, entry.center.lat, entry.center.lon);
+  return true;
+}
+
+function isMapRefreshDue(position) {
+  const lat = position?.coords?.latitude;
+  const lon = position?.coords?.longitude;
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return false;
+  }
+
+  if (!state.mapPrior.lastFetchAt) {
+    return true;
+  }
+
+  if (Date.now() - state.mapPrior.lastFetchAt >= MAP_REFRESH_INTERVAL_MS) {
+    return true;
+  }
+
+  if (!Number.isFinite(state.mapPrior.lastQueryLat) || !Number.isFinite(state.mapPrior.lastQueryLon)) {
+    return true;
+  }
+
+  return haversineMeters(lat, lon, state.mapPrior.lastQueryLat, state.mapPrior.lastQueryLon) >= MAP_REFRESH_DISTANCE_M;
+}
+
+async function fetchMapSignals(position, reason = "manual") {
+  const lat = position?.coords?.latitude;
+  const lon = position?.coords?.longitude;
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    state.mapPrior.status = "waiting for gps";
+    state.mapPrior.source = reason;
+    state.mapPrior.error = "";
+    state.mapPrior.loading = false;
+    updateUi();
+    return;
+  }
+
+  if (!navigator.onLine) {
+    state.mapPrior.status = "offline";
+    state.mapPrior.source = reason;
+    state.mapPrior.error = "";
+    state.mapPrior.loading = false;
+    updateUi();
+    applyCachedMapPrior(position, "offline cache");
+    return;
+  }
+
+  const query = buildOverpassQuery(lat, lon, MAP_QUERY_RADIUS_M);
+  state.mapPrior.status = "loading";
+  state.mapPrior.loading = true;
+  state.mapPrior.source = reason;
+  state.mapPrior.error = "";
+  updateUi();
+
+  let lastError = null;
+  for (const endpoint of MAP_OVERPASS_ENDPOINTS) {
+    try {
+      const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const payload = await response.json();
+      const signals = extractSignalsFromOverpass(payload);
+      const fetchedAt = Date.now();
+      const cache = loadMapCache() || { version: 1, entries: [] };
+      const nextEntry = {
+        fetchedAt,
+        center: { lat, lon },
+        radius: MAP_QUERY_RADIUS_M,
+        signals,
+      };
+
+      cache.version = 1;
+      cache.entries = [nextEntry, ...(Array.isArray(cache.entries) ? cache.entries : [])]
+        .filter((entry) => entry && typeof entry.fetchedAt === "number")
+        .sort((a, b) => b.fetchedAt - a.fetchedAt)
+        .slice(0, 8);
+      saveMapCache(cache);
+
+      const result = computeMapPrior(position, signals, "live", fetchedAt);
+      applyMapPriorResult(result, "live", fetchedAt, lat, lon);
+      log(`map prior refreshed (${signals.length} signal${signals.length === 1 ? "" : "s"})`);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  state.mapPrior.status = "fetch failed";
+  state.mapPrior.source = reason;
+  state.mapPrior.error = lastError ? lastError.message : "unknown";
+  state.mapPrior.loading = false;
+  updateUi();
+
+  if (!applyCachedMapPrior(position, "cached fallback")) {
+    log(`map fetch failed: ${state.mapPrior.error}`);
+  } else {
+    log(`map fetch failed, using cache: ${state.mapPrior.error}`);
+  }
+}
+
+async function refreshMapPrior(position, { reason = "manual", force = false } = {}) {
+  if (!state.mapPrior.enabled) {
+    state.mapPrior.status = "off";
+    state.mapPrior.source = "none";
+    state.mapPrior.error = "";
+    updateUi();
+    return;
+  }
+
+  if (state.mapPrior.loading && !force) {
+    applyCachedMapPrior(position, "cached");
+    return;
+  }
+
+  if (!force && !isMapRefreshDue(position)) {
+    applyCachedMapPrior(position, "cached");
+    return;
+  }
+
+  await fetchMapSignals(position, reason);
+}
+
+function setMapPriorEnabled(nextEnabled, reason = "manual") {
+  state.mapPrior.enabled = nextEnabled;
+  if (!nextEnabled) {
+    state.mapPrior.status = "off";
+    state.mapPrior.loading = false;
+    state.mapPrior.confidence = 0;
+    state.mapPrior.nearbyCount = 0;
+    state.mapPrior.signalCount = 0;
+    state.mapPrior.nearestDistanceM = null;
+    state.mapPrior.source = "none";
+    state.mapPrior.error = "";
+    updateUi();
+    log("map prior disabled");
+    return;
+  }
+
+  log(`map prior enabled (${reason})`);
+  if (state.gps.lat != null && state.gps.lon != null) {
+    void refreshMapPrior(
+      {
+        coords: {
+          latitude: state.gps.lat,
+          longitude: state.gps.lon,
+          accuracy: state.gps.accuracy,
+          heading: state.gps.heading,
+          speed: state.gps.speed,
+        },
+      },
+      { reason, force: true }
+    );
+  } else {
+    state.mapPrior.status = "waiting for gps";
+    state.mapPrior.error = "";
+    updateUi();
+  }
+
+  if (state.geoWatchId == null) {
+    startGpsWatch();
+  }
 }
 
 function maybeTriggerFallbackFromManualLead() {
@@ -774,6 +1372,30 @@ armBtn.addEventListener("click", async () => {
 
 stopBtn.addEventListener("click", stopCamera);
 useGpsBtn.addEventListener("click", startGpsWatch);
+mapRefreshBtn.addEventListener("click", () => {
+  if (!state.mapPrior.enabled) {
+    setMapPriorEnabled(true, "manual refresh");
+    return;
+  }
+  if (state.gps.lat != null && state.gps.lon != null) {
+    void refreshMapPrior(
+      {
+        coords: {
+          latitude: state.gps.lat,
+          longitude: state.gps.lon,
+          accuracy: state.gps.accuracy,
+          heading: state.gps.heading,
+          speed: state.gps.speed,
+        },
+      },
+      { reason: "manual", force: true }
+    );
+  } else {
+    log("map refresh waiting for GPS fix");
+    state.mapPrior.status = "waiting for gps";
+    updateUi();
+  }
+});
 leadBtn.addEventListener("click", () => {
   maybeTriggerFallbackFromManualLead();
 });
@@ -789,6 +1411,9 @@ redSoundToggle.addEventListener("change", () => {
   state.soundSettings.red = redSoundToggle.checked;
   updateUi();
   log(`red sound ${state.soundSettings.red ? "enabled" : "disabled"}`);
+});
+mapPriorToggle.addEventListener("change", () => {
+  setMapPriorEnabled(mapPriorToggle.checked, "toggle");
 });
 
 cooldownInput.addEventListener("input", updateUi);
@@ -816,10 +1441,36 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+window.addEventListener("online", () => {
+  if (state.mapPrior.enabled && state.gps.lat != null && state.gps.lon != null) {
+    void refreshMapPrior(
+      {
+        coords: {
+          latitude: state.gps.lat,
+          longitude: state.gps.lon,
+          accuracy: state.gps.accuracy,
+          heading: state.gps.heading,
+          speed: state.gps.speed,
+        },
+      },
+      { reason: "online", force: true }
+    );
+  }
+});
+
+window.addEventListener("offline", () => {
+  if (state.mapPrior.enabled) {
+    state.mapPrior.status = "offline";
+    state.mapPrior.source = "offline";
+    updateUi();
+  }
+});
+
 setMode("waiting");
 setStopped(false, "initial");
 setObservedLight("none", 0, "init");
 updateUi();
 log("ready for camera and sound tests");
 refreshParkedState("initial");
+summarizeMapStatus();
 void registerServiceWorker();
