@@ -208,6 +208,11 @@ async function triggerAlert(kind, source) {
     return;
   }
 
+  if (kind !== "green") {
+    log(`${kind} detected from ${source} (silent)`);
+    return;
+  }
+
   log(`green alert from ${source}`, "tone-green");
   await playGreenSound();
 }
@@ -226,9 +231,12 @@ function setObservedLight(nextColor, confidence, source) {
     return;
   }
 
-  if (previous !== nextColor || state.lightLatchedColor !== nextColor) {
+  if ((nextColor === "green" || nextColor === "yellow") && (previous !== nextColor || state.lightLatchedColor !== nextColor)) {
     state.lightLatchedColor = nextColor;
     triggerAlert(nextColor, source);
+  } else if (nextColor === "red" && (previous !== "red" || state.lightLatchedColor !== "red")) {
+    state.lightLatchedColor = "red";
+    log(`red detected from ${source} (silent)`);
   }
 }
 
