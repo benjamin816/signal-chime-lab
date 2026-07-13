@@ -94,13 +94,16 @@ const state = {
   },
 };
 
-const APP_VERSION = "v0.6";
+const APP_VERSION = "v0.7";
 const FALLBACK_STATIONARY_SECONDS = 10;
 const PARKED_STATIONARY_SECONDS = 420;
 const MAP_CACHE_KEY = "signal-chime-map-cache-v1";
-const MAP_QUERY_RADIUS_M = 350;
-const MAP_REFRESH_DISTANCE_M = 120;
-const MAP_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const MAP_QUERY_RADIUS_M = 275;
+const MAP_REFRESH_DISTANCE_M = 85;
+const MAP_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const MAP_LIKELY_CONFIDENCE = 0.75;
+const MAP_NEARBY_CONFIDENCE = 0.5;
+const MAP_BLOCK_FALLBACK_CONFIDENCE = 0.6;
 const MAP_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAP_OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
@@ -579,8 +582,8 @@ function scoreTrafficLightCandidate(det) {
   const centerScore = clamp(1 - centerDistance / 0.75, 0, 1);
   const upperScore = clamp(1 - cy / 0.95, 0, 1);
   const sizeScore = clamp(Math.sqrt((w * h) / (analysisCanvas.width * analysisCanvas.height)) * 4, 0, 1);
-  const mapBoost = state.mapPrior.enabled ? clamp(state.mapPrior.confidence * 0.12, 0, 0.12) : 0;
-  return det.score * 0.45 + centerScore * 0.25 + upperScore * 0.2 + sizeScore * 0.1 + mapBoost;
+  const mapBoost = state.mapPrior.enabled ? clamp(state.mapPrior.confidence * 0.08, 0, 0.08) : 0;
+  return det.score * 0.47 + centerScore * 0.24 + upperScore * 0.19 + sizeScore * 0.1 + mapBoost;
 }
 
 function scoreLeadCarCandidate(det) {
@@ -602,7 +605,7 @@ function selectBestDetection(detections, scorer) {
 
 function updateLeadTracking(leadDetection, trafficLightVisible) {
   const mapAllowsFallback =
-    !state.mapPrior.enabled || state.mapPrior.signalCount === 0 || state.mapPrior.confidence >= 0.38;
+    !state.mapPrior.enabled || state.mapPrior.signalCount === 0 || state.mapPrior.confidence < MAP_BLOCK_FALLBACK_CONFIDENCE;
   const eligible =
     state.isStopped &&
     !state.isParked &&
@@ -1078,9 +1081,9 @@ function computeMapPrior(position, signals, source, fetchedAt) {
   let status;
   if (!signalCount) {
     status = "no mapped lights";
-  } else if (confidence >= 0.72) {
+  } else if (confidence >= MAP_LIKELY_CONFIDENCE) {
     status = "signal likely ahead";
-  } else if (confidence >= 0.42) {
+  } else if (confidence >= MAP_NEARBY_CONFIDENCE) {
     status = "signal nearby";
   } else {
     status = "signal weak";

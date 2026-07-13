@@ -11,6 +11,7 @@ Small iPhone-friendly MVP for testing:
 - local COCO-SSD model files for offline use after load
 - service worker cache for repeat offline launches
 - optional OpenStreetMap traffic-signal prior with local caching for offline reuse
+- tuned conservatively for driving: smaller OSM search radius and stricter "likely" confidence before the map meaningfully nudges vision
 
 ## Run
 
