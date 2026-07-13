@@ -16,6 +16,7 @@ const visionHintEl = document.getElementById("visionHint");
 const appBadgeStateEl = document.getElementById("appBadgeState");
 const appBadgeLabelEl = document.querySelector(".app-badge__label");
 const fallbackGateReadoutEl = document.getElementById("fallbackGateReadout");
+const parkedAfterReadoutEl = document.getElementById("parkedAfterReadout");
 const cooldownInput = document.getElementById("cooldown");
 const cooldownValueEl = document.getElementById("cooldownValue");
 const leadDistanceInput = document.getElementById("leadDistance");
@@ -41,6 +42,7 @@ const state = {
   frameBusy: false,
   useGps: false,
   isStopped: false,
+  isParked: false,
   stationarySince: null,
   lastAlertAt: 0,
   lastAlertType: "none",
@@ -64,8 +66,9 @@ const state = {
   },
 };
 
-const APP_VERSION = "v0.4";
+const APP_VERSION = "v0.5";
 const FALLBACK_STATIONARY_SECONDS = 10;
+const PARKED_STATIONARY_SECONDS = 420;
 
 const SOUND_PRESETS = {
   green: [
@@ -112,19 +115,42 @@ function updateUi() {
   audioPill.textContent = state.audioReady ? "audio armed" : "audio locked";
   lightStateEl.textContent = state.light;
   confidenceStateEl.textContent = `${Math.round(state.lightConfidence * 100)}%`;
-  stoppedStateEl.textContent = state.isStopped ? "yes" : "no";
-  fallbackStateEl.textContent = `armed: ${state.fallbackArmed ? "yes" : "no"}`;
-  stationaryTimerEl.textContent = `${stationarySeconds().toFixed(1)}s`;
+  stoppedStateEl.textContent = state.isParked ? "parked" : state.isStopped ? "yes" : "no";
+  fallbackStateEl.textContent = state.isParked ? "parked" : `armed: ${state.fallbackArmed ? "yes" : "no"}`;
+  stationaryTimerEl.textContent = state.isParked ? "parked" : `${stationarySeconds().toFixed(1)}s`;
   leadDistanceReadoutEl.textContent = `${state.leadDistance.toFixed(1)}x`;
   lastAlertEl.textContent = state.lastAlertType;
   cooldownValueEl.textContent = `${cooldownInput.value} ms`;
   leadDistanceValueEl.textContent = `${Number(leadDistanceInput.value).toFixed(1)}x`;
   visionHintEl.textContent = state.visionHint;
   fallbackGateReadoutEl.textContent = `${FALLBACK_STATIONARY_SECONDS}s`;
+  parkedAfterReadoutEl.textContent = "7m";
   yellowSoundToggle.checked = state.soundSettings.yellow;
   redSoundToggle.checked = state.soundSettings.red;
-  appBadgeStateEl.textContent = `${state.detectorStatus || "idle"}`;
+  appBadgeStateEl.textContent = state.isParked ? "parked" : `${state.detectorStatus || "idle"}`;
   appBadgeLabelEl.textContent = `Model ${APP_VERSION}`;
+}
+
+function refreshParkedState(reason = "timer") {
+  const parkedNow = state.isStopped && stationarySeconds() >= PARKED_STATIONARY_SECONDS;
+  if (parkedNow === state.isParked) {
+    return;
+  }
+
+  state.isParked = parkedNow;
+  if (parkedNow) {
+    state.fallbackArmed = false;
+    state.fallbackAlertedThisStop = false;
+    state.pendingLeadDeparture = false;
+    state.leadBaselineArea = null;
+    state.leadBaselineBottom = null;
+    setMode(`parked (${reason})`);
+    log(`parked mode engaged after ${PARKED_STATIONARY_SECONDS}s stationary`);
+  } else {
+    setMode("stopped");
+    log("parked mode cleared");
+  }
+  updateUi();
 }
 
 function setStopped(nextStopped, reason = "manual") {
@@ -137,6 +163,7 @@ function setStopped(nextStopped, reason = "manual") {
     state.stationarySince = null;
     state.fallbackArmed = false;
     state.fallbackAlertedThisStop = false;
+    state.isParked = false;
     state.leadBaselineArea = null;
     state.leadBaselineBottom = null;
     state.pendingLeadDeparture = false;
@@ -225,7 +252,7 @@ async function triggerAlert(kind, source) {
 
   if (kind === "yellow") {
     log(`yellow detected from ${source}`);
-    if (state.soundSettings.yellow) {
+    if (state.soundSettings.yellow && !state.isParked) {
       await playYellowSound();
     }
     return;
@@ -233,7 +260,7 @@ async function triggerAlert(kind, source) {
 
   if (kind === "red") {
     log(`red detected from ${source}`);
-    if (state.soundSettings.red) {
+    if (state.soundSettings.red && !state.isParked) {
       await playRedSound();
     }
     return;
@@ -245,7 +272,9 @@ async function triggerAlert(kind, source) {
   }
 
   log(`green alert from ${source}`, "tone-green");
-  await playGreenSound();
+  if (!state.isParked) {
+    await playGreenSound();
+  }
 }
 
 function setObservedLight(nextColor, confidence, source) {
@@ -399,6 +428,7 @@ function selectBestDetection(detections, scorer) {
 function updateLeadTracking(leadDetection, trafficLightVisible) {
   const eligible =
     state.isStopped &&
+    !state.isParked &&
     stationarySeconds() >= FALLBACK_STATIONARY_SECONDS &&
     state.light === "none" &&
     !trafficLightVisible;
@@ -638,6 +668,7 @@ function stopCamera() {
   state.stationarySince = null;
   state.fallbackArmed = false;
   state.fallbackAlertedThisStop = false;
+  state.isParked = false;
   state.leadBaselineArea = null;
   state.leadBaselineBottom = null;
   state.pendingLeadDeparture = false;
@@ -691,9 +722,14 @@ function startGpsWatch() {
 }
 
 function maybeTriggerFallbackFromManualLead() {
+  if (state.isParked) {
+    log("fallback cue ignored while parked");
+    return;
+  }
+
   state.fallbackArmed = true;
   state.pendingLeadDeparture = true;
-  if (state.isStopped && stationarySeconds() >= FALLBACK_STATIONARY_SECONDS && state.light === "none") {
+  if (state.isStopped && !state.isParked && stationarySeconds() >= FALLBACK_STATIONARY_SECONDS && state.light === "none") {
     state.fallbackAlertedThisStop = true;
     triggerAlert("green", "manual lead-car cue");
   } else {
@@ -705,6 +741,7 @@ function maybeTriggerFallbackFromManualLead() {
 function startLoops() {
   if (state.stateTickId == null) {
     state.stateTickId = setInterval(() => {
+      refreshParkedState("timer");
       updateUi();
     }, 200);
   }
@@ -784,4 +821,5 @@ setStopped(false, "initial");
 setObservedLight("none", 0, "init");
 updateUi();
 log("ready for camera and sound tests");
+refreshParkedState("initial");
 void registerServiceWorker();
